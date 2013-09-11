@@ -4,6 +4,13 @@ var path = require('path')
 
 var mime = require('mime')
 var csv = require("fast-csv")
+var archiveLog = require('debug')('archive')
+var staticLog = require('debug')('static')
+
+var LRU = require('lru-cache')
+var cache = new LRU({
+	max: 1000,
+})
 
 var server = http.createServer(function (req, res) {
 	var path = resolvePath(req.url)
@@ -12,50 +19,124 @@ var server = http.createServer(function (req, res) {
 		if (stat) {
 			if (stat.isDirectory()) {
 				res.writeHead(403, 'forbidden', {
-					'content-type': 'text/plain',
-					'content-length': 'forbidden'.length
+					'Content-Type': 'text/plain',
+					'Content-Length': 'forbidden'.length
 				})
 				return res.end('forbidden')
 			}
 
-			var type = mime.lookup(path)
-			res.setHeader('content-type', type)
-			var fileStream = fs.createReadStream(path)
-			fileStream.pipe(res)
-			fileStream.on('end', function () {
-				res.end()
+			staticLog('static', path)
+			fs.stat(path, function (err, stat) {
+				if (stat) {
+					var type = mime.lookup(path)
+					res.setHeader('Content-Type', type)
+					res.setHeader('Content-Length', stat.size)
+					return fs.createReadStream(path).pipe(res)
+				} else {
+					return sendError('file does not exist' + path)
+				}
 			})
 		} else {
-			serveArchiveRequest(req, res)
+			return serveArchiveRequest(req, res)
 		}
 	});
 })
 
-
 function serveArchiveRequest (req, res) {
 	var url = req.url
+	var archivePath = resolveArchivePath(url)
+
+	archiveLog('archive', url)
+	getSegmentInfo(req.url, function (err, segmentInfo) {
+		if (err) {
+			sendError(err, res)
+		}
+
+		if (!segmentInfo) {
+			throw new Error('No segment' + url)
+		} else {
+			//console.log('got segment', segmentInfo)
+		}
+		sendSegment(req.url, segmentInfo, res)
+	})
+}
+
+function sendSegment (url, segmentInfo, res) {
+	var type = mime.lookup(url)
+	res.writeHead(200, {
+		'Content-Type': type,
+		'Content-Length': segmentInfo[1]
+	})
+
+	var archivePath = resolveArchivePath(url)
+
+	var segmentStream = fs.createReadStream(archivePath, {
+		flags: 'r',
+		start: segmentInfo[0],
+		end: segmentInfo[0] + segmentInfo[1]
+	})
+	
+	segmentStream.pipe(res)
+}
+
+function sendError (err, res) {
+	var err = JSON.stringify(err)
+	res.writeHead(500, {
+		'Content-Type': 'text/plain',
+		'Content-Length': Buffer.byteLength(err)
+	})
+	res.end(err)
+}
+
+function getSegmentInfo (url, cb) {
+	var url = normalizeSegmentUrl(url)
+	var cacheKey =  getCacheKey(url)
+	var entry = cache.get(cacheKey)
+	if (entry) {
+		cb(null, entry)
+	}
+
+	loadIndex(url, function (err) {
+		cb(err, cache.get(cacheKey))
+	})
+}
+
+function normalizeSegmentUrl (url) {
+	return url.substring(1, url.length)
+}
+
+function loadIndex (url, cb) {
 	var indexPath = resolveIndexPath(url)
+
 	fs.exists(indexPath, function (exists) {
 		if (exists) {
-			res.setHeader('content-type', 'text/plain')
 			csv(indexPath)
 				.on("data", function(data){
-					res.write(JSON.stringify(data))
+					var path = data[2]
+					var offsetAndLength = data.slice(0, 2).map(function (n) {
+						var n = parseInt(n)
+						if (n !==n) {
+							return cb(new Error('NaN length of offset for ' + path))
+						}
+						return n
+					})
+					cache.set(path, offsetAndLength)
 				})
 				.on("end", function(){
-					console.log("done")
-					res.end()
+					cb(null)
+				})
+				.on("error", function (err) {
+					cb(err)
 				})
 			.parse()
 		} else {
-			var body = 'could not find ' + req.url
-			res.writeHead(404, {
-				'content-type': 'text/plain',
-				'content-length': Buffer.byteLength(body)
-			})
-			res.end(body)
+			console.log('Index file does not exist')
 		}
 	})
+}
+
+function getCacheKey (url) {
+	return url;
 }
 
 function resolvePath (url) {
@@ -63,10 +144,12 @@ function resolvePath (url) {
 }
 
 function resolveArchivePath (url) {
+	return 'rec.tar';
 	return path.resolve(path.join('./', url))
 }
 
 function resolveIndexPath (url) {
+	return 'rec.idx';
 	return path.resolve(path.join('./', url))
 }
 
@@ -78,4 +161,3 @@ function resolveIndexPath (url) {
 
 server.listen(8484)
 console.log('listening on 8484')
-
