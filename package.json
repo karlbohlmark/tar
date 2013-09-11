@@ -1,0 +1,23 @@
+{
+  "name": "archive-server",
+  "version": "0.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/karlbohlmark/tar.git"
+  },
+  "author": "",
+  "license": "BSD-2-Clause",
+  "bugs": {
+    "url": "https://github.com/karlbohlmark/tar/issues"
+  },
+  "dependencies": {
+    "co": "~1.5.2",
+    "fast-csv": "0.0.1"
+  }
+}
