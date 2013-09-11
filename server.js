@@ -8,12 +8,23 @@ var csv = require("fast-csv")
 var server = http.createServer(function (req, res) {
 	var path = resolvePath(req.url)
 
-	fs.exists(path, function (exists) {
-		if (exists) {
+	fs.stat(path, function (err, stat) {
+		if (stat) {
+			if (stat.isDirectory()) {
+				res.writeHead(403, 'forbidden', {
+					'content-type': 'text/plain',
+					'content-length': 'forbidden'.length
+				})
+				return res.end('forbidden')
+			}
+
 			var type = mime.lookup(path)
 			res.setHeader('content-type', type)
 			var fileStream = fs.createReadStream(path)
 			fileStream.pipe(res)
+			fileStream.on('end', function () {
+				res.end()
+			})
 		} else {
 			serveArchiveRequest(req, res)
 		}
